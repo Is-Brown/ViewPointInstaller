@@ -182,10 +182,26 @@ func main() {
 								OnClicked: func() { go verifyInstallation() }},
 							PushButton{Text: "4 · FINAL CHECK — Ready to play", Font: btnFontBold, MinSize: btnMin,
 								OnClicked: func() { go finalCheck() }},
-							PushButton{Text: "Optional · Install ZombieBuddy Extensions", Font: btnFont, MinSize: btnMin,
-								OnClicked: func() { go installExtensions() }},
 							PushButton{Text: "Open Project Zomboid folder", Font: btnFont, MinSize: btnMin,
 								OnClicked: openPZFolder},
+						},
+					},
+					GroupBox{
+						Title:  "ZombieBuddy Extensions (Optional)",
+						Layout: Grid{Columns: 2, Spacing: 8, Margins: Margins{Left: 10, Top: 8, Right: 10, Bottom: 10}},
+						Children: []Widget{
+							PushButton{
+								Text:      "Swap JAR → Use Extensions Version",
+								Font:      btnFont,
+								MinSize:   btnMin,
+								OnClicked: func() { go swapJarToExtensions() },
+							},
+							PushButton{
+								Text:      "Restore JAR → Use Official ZombieBuddy",
+								Font:      btnFont,
+								MinSize:   btnMin,
+								OnClicked: func() { go restoreJarToOfficial() },
+							},
 						},
 					},
 					GroupBox{
@@ -256,30 +272,12 @@ func installZombieBuddy() {
 	appendLog("Download ZombieBuddyInstaller.exe from GitHub and run it; choose Install/Update and Both.")
 }
 
-// installExtensions installs the optional "[B42] ZombieBuddy Extensions" add-on
-// following its author's manual steps: back up and replace ZombieBuddy.jar with the
-// Extensions JAR, and copy the current zbNative.dll from original ZombieBuddy.
-// It is NOT required for Project Viewpoint; official ZombieBuddy works on its own.
-func installExtensions() {
-	appendLog("--- Optional: ZombieBuddy Extensions ---")
+// jarSwapPrecheck runs the checks common to both swap directions and returns
+// (backupDir, stamp, ok). On any failure it logs and returns ok=false.
+func jarSwapPrecheck(label string) (backupDir, stamp string, ok bool) {
+	appendLog("--- " + label + " ---")
 	if pzRoot == "" {
 		appendLog("ERROR: Project Zomboid installation was not found.")
-		return
-	}
-	if findWorkshopDir(workshopExt) == "" {
-		appendLog("ZombieBuddy Extensions is not downloaded. Opening its Workshop page (ID " + workshopExt + ")...")
-		appendLog("Subscribe in Steam, wait for the download to finish, then click this button again.")
-		openURL("https://steamcommunity.com/sharedfiles/filedetails/?id=" + workshopExt)
-		return
-	}
-	src := findExtensionsJar()
-	if src == "" {
-		appendLog("ERROR: Workshop " + workshopExt + " is downloaded, but no ZombieBuddy.jar was found under mods\\" + extModID + ".")
-		return
-	}
-	dll := findWorkshopFile(workshopZB, "zbNative.dll")
-	if dll == "" {
-		appendLog("ERROR: zbNative.dll was not found in the original ZombieBuddy Workshop folder (" + workshopZB + "). Subscribe to ZombieBuddy first (step 1).")
 		return
 	}
 	if gameRunning() {
@@ -287,39 +285,115 @@ func installExtensions() {
 		showError("Please close Project Zomboid and any Coop/dedicated server first.\n\nZombieBuddy files cannot be replaced while the game is running.")
 		return
 	}
-
-	stamp := time.Now().Format("20060102-150405")
-	backupDir := filepath.Join(pzRoot, "ViewpointInstallerBackups")
+	stamp = time.Now().Format("20060102-150405")
+	backupDir = filepath.Join(pzRoot, "ViewpointInstallerBackups")
 	if err := os.MkdirAll(backupDir, 0755); err != nil {
 		appendLog("ERROR creating backup folder: " + err.Error())
 		return
 	}
-	for _, f := range []string{"ZombieBuddy.jar", "zbNative.dll"} {
-		cur := filepath.Join(pzRoot, f)
-		if _, err := os.Stat(cur); err != nil {
-			continue
-		}
-		backup := filepath.Join(backupDir, f+"."+stamp+".bak")
-		if err := copyFile(cur, backup); err != nil {
-			appendLog("ERROR backing up " + f + ": " + err.Error() + " — nothing was changed.")
-			return
-		}
-		appendLog("Backed up " + f + " to " + backup)
+	ok = true
+	return
+}
+
+// backupGameFile backs up a single file inside pzRoot, logging a message.
+// Returns false on error, leaving the original untouched.
+func backupGameFile(name, backupDir, stamp string) bool {
+	cur := filepath.Join(pzRoot, name)
+	if _, err := os.Stat(cur); err != nil {
+		return true // file doesn't exist yet — nothing to back up
+	}
+	backup := filepath.Join(backupDir, name+"."+stamp+".bak")
+	if err := copyFile(cur, backup); err != nil {
+		appendLog("ERROR backing up " + name + ": " + err.Error() + " — nothing was changed.")
+		return false
+	}
+	appendLog("Backed up " + name + " → " + backup)
+	return true
+}
+
+// swapJarToExtensions replaces ZombieBuddy.jar with the Extensions version.
+// Also refreshes zbNative.dll from the original ZombieBuddy workshop folder.
+func swapJarToExtensions() {
+	backupDir, stamp, ok := jarSwapPrecheck("Swap JAR → Extensions version")
+	if !ok {
+		return
 	}
 
-	for _, c := range []struct{ src, name string }{{src, "ZombieBuddy.jar"}, {dll, "zbNative.dll"}} {
+	// Extensions JAR
+	if findWorkshopDir(workshopExt) == "" {
+		appendLog("ZombieBuddy Extensions is not downloaded. Opening its Workshop page (ID " + workshopExt + ")...")
+		appendLog("Subscribe in Steam, wait for the download to finish, then try again.")
+		openURL("https://steamcommunity.com/sharedfiles/filedetails/?id=" + workshopExt)
+		return
+	}
+	extJar := findExtensionsJar()
+	if extJar == "" {
+		appendLog("ERROR: Workshop " + workshopExt + " downloaded, but no ZombieBuddy.jar found under mods\\" + extModID + ".")
+		return
+	}
+	dll := findWorkshopFile(workshopZB, "zbNative.dll")
+	if dll == "" {
+		appendLog("ERROR: zbNative.dll not found in original ZombieBuddy workshop folder (" + workshopZB + "). Run step 1 and subscribe first.")
+		return
+	}
+
+	for _, name := range []string{"ZombieBuddy.jar", "zbNative.dll"} {
+		if !backupGameFile(name, backupDir, stamp) {
+			return
+		}
+	}
+	for _, c := range []struct{ src, name string }{{extJar, "ZombieBuddy.jar"}, {dll, "zbNative.dll"}} {
 		dst := filepath.Join(pzRoot, c.name)
 		if err := copyFile(c.src, dst); err != nil {
-			appendLog("ERROR installing " + c.name + ": " + err.Error())
-			appendLog("Your previous files are in " + backupDir + " (suffix ." + stamp + ".bak).")
+			appendLog("ERROR writing " + c.name + ": " + err.Error())
+			appendLog("Previous files backed up to " + backupDir + " (suffix ." + stamp + ".bak).")
 			return
 		}
 		sum, _ := fileSHA256(dst)
-		appendLog("Installed " + c.name + " (SHA-256 " + sum + ")")
+		appendLog("Installed " + c.name + " from Extensions (SHA-256 " + sum + ")")
 	}
-	appendLog("ZombieBuddy Extensions installed. Keep original ZombieBuddy subscribed and enabled.")
-	appendLog("Note: a newer official ZombieBuddy update may replace this JAR; that is expected.")
-	showInfo("ZombieBuddy Extensions installed.\n\nBackups of your previous files were saved to:\n" + backupDir)
+	appendLog("Done. ZombieBuddy.jar is now the Extensions version. Keep original ZombieBuddy subscribed.")
+	appendLog("Note: a newer official ZombieBuddy update may overwrite this JAR — that is expected.")
+	showInfo("ZombieBuddy.jar swapped to the Extensions version.\n\nBackups saved to:\n" + backupDir)
+}
+
+// restoreJarToOfficial puts back the official ZombieBuddy.jar and zbNative.dll
+// sourced directly from the ZombieBuddy Workshop folder (no backup required).
+func restoreJarToOfficial() {
+	backupDir, stamp, ok := jarSwapPrecheck("Restore JAR → Official ZombieBuddy")
+	if !ok {
+		return
+	}
+
+	officialJar := findWorkshopFile(workshopZB, "ZombieBuddy.jar")
+	if officialJar == "" {
+		appendLog("ERROR: ZombieBuddy.jar not found in original ZombieBuddy workshop folder (" + workshopZB + ").")
+		appendLog("Make sure ZombieBuddy is subscribed in Steam and has finished downloading.")
+		return
+	}
+	dll := findWorkshopFile(workshopZB, "zbNative.dll")
+	if dll == "" {
+		appendLog("ERROR: zbNative.dll not found in original ZombieBuddy workshop folder (" + workshopZB + ").")
+		return
+	}
+
+	for _, name := range []string{"ZombieBuddy.jar", "zbNative.dll"} {
+		if !backupGameFile(name, backupDir, stamp) {
+			return
+		}
+	}
+	for _, c := range []struct{ src, name string }{{officialJar, "ZombieBuddy.jar"}, {dll, "zbNative.dll"}} {
+		dst := filepath.Join(pzRoot, c.name)
+		if err := copyFile(c.src, dst); err != nil {
+			appendLog("ERROR writing " + c.name + ": " + err.Error())
+			appendLog("Previous files backed up to " + backupDir + " (suffix ." + stamp + ".bak).")
+			return
+		}
+		sum, _ := fileSHA256(dst)
+		appendLog("Restored " + c.name + " from official ZombieBuddy (SHA-256 " + sum + ")")
+	}
+	appendLog("Done. ZombieBuddy.jar is now the official version from Workshop " + workshopZB + ".")
+	showInfo("ZombieBuddy.jar restored to the official version.\n\nBackups saved to:\n" + backupDir)
 }
 
 func verifyInstallation() {
