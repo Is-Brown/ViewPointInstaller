@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/lxn/walk"
@@ -26,8 +27,9 @@ const (
 	pzAppID          = "108600"
 	workshopView     = "3809306528"
 	workshopZB       = "3619862853"
-	workshopFix      = "3807686870"
+	workshopExt      = "3807686870" // [B42] ZombieBuddy Extensions (optional add-on)
 	workshopModels   = "3810302175"
+	extModID         = "ZombieBuddy_Extensions"
 	githubReleaseAPI = "https://api.github.com/repos/zed-0xff/ZombieBuddy/releases/tags/windows_installer_4.2"
 	githubReleases   = "https://github.com/zed-0xff/ZombieBuddy/releases/tag/windows_installer_4.2"
 )
@@ -75,10 +77,30 @@ func showInfo(msg string) {
 	})
 }
 
+// hiddenCmd builds a command that does not flash a console window
+// (the app is linked with -H=windowsgui, so cmd/tasklist would otherwise pop one up).
+func hiddenCmd(name string, args ...string) *exec.Cmd {
+	c := exec.Command(name, args...)
+	c.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	return c
+}
+
 func openURL(url string) {
-	if err := exec.Command("cmd", "/c", "start", "", url).Start(); err != nil {
+	if err := hiddenCmd("cmd", "/c", "start", "", url).Start(); err != nil {
 		appendLog("ERROR opening URL: " + err.Error())
 	}
+}
+
+// gameRunning reports whether Project Zomboid (or its dedicated server) is running,
+// since ZombieBuddy.jar / zbNative.dll are locked while the game is open.
+func gameRunning() bool {
+	out, err := hiddenCmd("tasklist", "/FO", "CSV", "/NH").Output()
+	if err != nil {
+		return false
+	}
+	low := strings.ToLower(string(out))
+	return strings.Contains(low, "\"projectzomboid64.exe\"") || strings.Contains(low, "\"projectzomboid32.exe\"") ||
+		strings.Contains(low, "\"projectzomboidserver") || strings.Contains(low, "\"startserver64")
 }
 
 func openPZFolder() {
@@ -136,7 +158,7 @@ func main() {
 						Background: SolidColorBrush{Color: headerBg},
 					},
 					Label{
-						Text:       "Opens the required Workshop items, installs official ZombieBuddy, applies the B42.21 fix when needed, and verifies the result.",
+						Text:       "Opens the required Workshop items, installs official ZombieBuddy, optionally adds ZombieBuddy Extensions, and verifies the result.",
 						Font:       Font{Family: "Segoe UI", PointSize: 9},
 						TextColor:  walk.RGB(0xA8, 0xB0, 0xBC),
 						Background: SolidColorBrush{Color: headerBg},
@@ -156,14 +178,30 @@ func main() {
 								OnClicked: func() { go openWorkshopPages() }},
 							PushButton{Text: "2 · Install / Update ZombieBuddy", Font: btnFont, MinSize: btnMin,
 								OnClicked: func() { go installZombieBuddy() }},
-							PushButton{Text: "3 · Apply B42.21 fix / extension", Font: btnFont, MinSize: btnMin,
-								OnClicked: func() { go applyFix() }},
-							PushButton{Text: "4 · Verify installation", Font: btnFont, MinSize: btnMin,
+							PushButton{Text: "3 · Verify installation", Font: btnFont, MinSize: btnMin,
 								OnClicked: func() { go verifyInstallation() }},
+							PushButton{Text: "4 · FINAL CHECK — Ready to play", Font: btnFontBold, MinSize: btnMin,
+								OnClicked: func() { go finalCheck() }},
 							PushButton{Text: "Open Project Zomboid folder", Font: btnFont, MinSize: btnMin,
 								OnClicked: openPZFolder},
-							PushButton{Text: "5 · FINAL CHECK — Ready to play", Font: btnFontBold, MinSize: btnMin,
-								OnClicked: func() { go finalCheck() }},
+						},
+					},
+					GroupBox{
+						Title:  "ZombieBuddy Extensions (Optional)",
+						Layout: Grid{Columns: 2, Spacing: 8, Margins: Margins{Left: 10, Top: 8, Right: 10, Bottom: 10}},
+						Children: []Widget{
+							PushButton{
+								Text:      "Swap JAR → Use Extensions Version",
+								Font:      btnFont,
+								MinSize:   btnMin,
+								OnClicked: func() { go swapJarToExtensions() },
+							},
+							PushButton{
+								Text:      "Restore JAR → Use Official ZombieBuddy",
+								Font:      btnFont,
+								MinSize:   btnMin,
+								OnClicked: func() { go restoreJarToOfficial() },
+							},
 						},
 					},
 					GroupBox{
@@ -205,7 +243,6 @@ func valueOrUnknown(s string) string {
 func openWorkshopPages() {
 	pages := []struct{ id, name string }{
 		{workshopZB, "ZombieBuddy"},
-		{workshopFix, "ZombieBuddy B42.21 fix / Extensions"},
 		{workshopView, "Project Viewpoint"},
 		{workshopModels, "6244 3D models for Viewpoint"},
 	}
@@ -235,34 +272,128 @@ func installZombieBuddy() {
 	appendLog("Download ZombieBuddyInstaller.exe from GitHub and run it; choose Install/Update and Both.")
 }
 
-func applyFix() {
+// jarSwapPrecheck runs the checks common to both swap directions and returns
+// (backupDir, stamp, ok). On any failure it logs and returns ok=false.
+func jarSwapPrecheck(label string) (backupDir, stamp string, ok bool) {
+	appendLog("--- " + label + " ---")
 	if pzRoot == "" {
 		appendLog("ERROR: Project Zomboid installation was not found.")
 		return
 	}
-	src := findFixJar()
-	if src == "" {
-		appendLog("ERROR: No B42.21 replacement ZombieBuddy.jar found in Workshop ID " + workshopFix + ".")
+	if gameRunning() {
+		appendLog("ERROR: Project Zomboid (or a server) is running. Close it and try again.")
+		showError("Please close Project Zomboid and any Coop/dedicated server first.\n\nZombieBuddy files cannot be replaced while the game is running.")
 		return
 	}
-	dst := filepath.Join(pzRoot, "ZombieBuddy.jar")
-	backupDir := filepath.Join(pzRoot, "ViewpointInstallerBackups")
-	os.MkdirAll(backupDir, 0755)
-	if _, err := os.Stat(dst); err == nil {
-		backup := filepath.Join(backupDir, "ZombieBuddy.jar."+time.Now().Format("20060102-150405")+".bak")
-		if err := copyFile(dst, backup); err != nil {
-			appendLog("ERROR backing up ZombieBuddy.jar: " + err.Error())
+	stamp = time.Now().Format("20060102-150405")
+	backupDir = filepath.Join(pzRoot, "ViewpointInstallerBackups")
+	if err := os.MkdirAll(backupDir, 0755); err != nil {
+		appendLog("ERROR creating backup folder: " + err.Error())
+		return
+	}
+	ok = true
+	return
+}
+
+// backupGameFile backs up a single file inside pzRoot, logging a message.
+// Returns false on error, leaving the original untouched.
+func backupGameFile(name, backupDir, stamp string) bool {
+	cur := filepath.Join(pzRoot, name)
+	if _, err := os.Stat(cur); err != nil {
+		return true // file doesn't exist yet — nothing to back up
+	}
+	backup := filepath.Join(backupDir, name+"."+stamp+".bak")
+	if err := copyFile(cur, backup); err != nil {
+		appendLog("ERROR backing up " + name + ": " + err.Error() + " — nothing was changed.")
+		return false
+	}
+	appendLog("Backed up " + name + " → " + backup)
+	return true
+}
+
+// swapJarToExtensions replaces ZombieBuddy.jar with the Extensions version.
+// Also refreshes zbNative.dll from the original ZombieBuddy workshop folder.
+func swapJarToExtensions() {
+	backupDir, stamp, ok := jarSwapPrecheck("Swap JAR → Extensions version")
+	if !ok {
+		return
+	}
+
+	// Extensions JAR
+	if findWorkshopDir(workshopExt) == "" {
+		appendLog("ZombieBuddy Extensions is not downloaded. Opening its Workshop page (ID " + workshopExt + ")...")
+		appendLog("Subscribe in Steam, wait for the download to finish, then try again.")
+		openURL("https://steamcommunity.com/sharedfiles/filedetails/?id=" + workshopExt)
+		return
+	}
+	extJar := findExtensionsJar()
+	if extJar == "" {
+		appendLog("ERROR: Workshop " + workshopExt + " downloaded, but no ZombieBuddy.jar found under mods\\" + extModID + ".")
+		return
+	}
+	dll := findWorkshopFile(workshopZB, "zbNative.dll")
+	if dll == "" {
+		appendLog("ERROR: zbNative.dll not found in original ZombieBuddy workshop folder (" + workshopZB + "). Run step 1 and subscribe first.")
+		return
+	}
+
+	for _, name := range []string{"ZombieBuddy.jar", "zbNative.dll"} {
+		if !backupGameFile(name, backupDir, stamp) {
 			return
 		}
-		appendLog("Backed up existing ZombieBuddy.jar to " + backup)
 	}
-	if err := copyFile(src, dst); err != nil {
-		appendLog("ERROR copying replacement JAR: " + err.Error())
+	for _, c := range []struct{ src, name string }{{extJar, "ZombieBuddy.jar"}, {dll, "zbNative.dll"}} {
+		dst := filepath.Join(pzRoot, c.name)
+		if err := copyFile(c.src, dst); err != nil {
+			appendLog("ERROR writing " + c.name + ": " + err.Error())
+			appendLog("Previous files backed up to " + backupDir + " (suffix ." + stamp + ".bak).")
+			return
+		}
+		sum, _ := fileSHA256(dst)
+		appendLog("Installed " + c.name + " from Extensions (SHA-256 " + sum + ")")
+	}
+	appendLog("Done. ZombieBuddy.jar is now the Extensions version. Keep original ZombieBuddy subscribed.")
+	appendLog("Note: a newer official ZombieBuddy update may overwrite this JAR — that is expected.")
+	showInfo("ZombieBuddy.jar swapped to the Extensions version.\n\nBackups saved to:\n" + backupDir)
+}
+
+// restoreJarToOfficial puts back the official ZombieBuddy.jar and zbNative.dll
+// sourced directly from the ZombieBuddy Workshop folder (no backup required).
+func restoreJarToOfficial() {
+	backupDir, stamp, ok := jarSwapPrecheck("Restore JAR → Official ZombieBuddy")
+	if !ok {
 		return
 	}
-	sum, _ := fileSHA256(dst)
-	appendLog("Installed replacement ZombieBuddy.jar. SHA-256: " + sum)
-	appendLog("Restart Project Zomboid and approve the Viewpoint Java mod when ZombieBuddy asks.")
+
+	officialJar := findWorkshopFile(workshopZB, "ZombieBuddy.jar")
+	if officialJar == "" {
+		appendLog("ERROR: ZombieBuddy.jar not found in original ZombieBuddy workshop folder (" + workshopZB + ").")
+		appendLog("Make sure ZombieBuddy is subscribed in Steam and has finished downloading.")
+		return
+	}
+	dll := findWorkshopFile(workshopZB, "zbNative.dll")
+	if dll == "" {
+		appendLog("ERROR: zbNative.dll not found in original ZombieBuddy workshop folder (" + workshopZB + ").")
+		return
+	}
+
+	for _, name := range []string{"ZombieBuddy.jar", "zbNative.dll"} {
+		if !backupGameFile(name, backupDir, stamp) {
+			return
+		}
+	}
+	for _, c := range []struct{ src, name string }{{officialJar, "ZombieBuddy.jar"}, {dll, "zbNative.dll"}} {
+		dst := filepath.Join(pzRoot, c.name)
+		if err := copyFile(c.src, dst); err != nil {
+			appendLog("ERROR writing " + c.name + ": " + err.Error())
+			appendLog("Previous files backed up to " + backupDir + " (suffix ." + stamp + ".bak).")
+			return
+		}
+		sum, _ := fileSHA256(dst)
+		appendLog("Restored " + c.name + " from official ZombieBuddy (SHA-256 " + sum + ")")
+	}
+	appendLog("Done. ZombieBuddy.jar is now the official version from Workshop " + workshopZB + ".")
+	showInfo("ZombieBuddy.jar restored to the official version.\n\nBackups saved to:\n" + backupDir)
 }
 
 func verifyInstallation() {
@@ -282,13 +413,14 @@ func verifyInstallation() {
 			appendLog("WARN: " + f + " is missing")
 		}
 	}
-	for _, id := range []string{workshopZB, workshopFix, workshopView, workshopModels} {
+	for _, id := range []string{workshopZB, workshopView, workshopModels} {
 		if p := findWorkshopDir(id); p != "" {
 			appendLog("PASS: Workshop " + id + " downloaded: " + p)
 		} else {
 			appendLog("WARN: Workshop " + id + " not found locally")
 		}
 	}
+	appendLog("INFO: " + extensionsStatus())
 	appendLog("Verification complete. Use FINAL CHECK for the complete readiness test.")
 }
 
@@ -328,7 +460,6 @@ func finalCheck() {
 	// Required Workshop downloads. We verify actual local content, not merely the Steam URL.
 	workshopChecks := []struct{ id, name, marker string }{
 		{workshopZB, "ZombieBuddy", "ZombieBuddy"},
-		{workshopFix, "ZombieBuddy B42.21 fix / Extensions", "ZombieBuddy_B42.21"},
 		{workshopView, "Project Viewpoint", "Viewpoint"},
 		{workshopModels, "6244 3D models for Viewpoint", ""},
 	}
@@ -343,19 +474,8 @@ func finalCheck() {
 		}
 	}
 
-	// Verify the B42.21 replacement actually matches the downloaded fix when possible.
-	if src := findFixJar(); src != "" {
-		dst := filepath.Join(pzRoot, "ZombieBuddy.jar")
-		srcHash, srcErr := fileSHA256(src)
-		dstHash, dstErr := fileSHA256(dst)
-		if srcErr == nil && dstErr == nil && strings.EqualFold(srcHash, dstHash) {
-			pass("Installed ZombieBuddy.jar matches the downloaded B42.21 replacement")
-		} else if srcErr == nil && dstErr == nil {
-			warn("ZombieBuddy.jar does not match the currently downloaded B42.21 replacement; this may be intentional if a newer official ZombieBuddy release is installed")
-		}
-	} else {
-		warn("Could not locate a B42.21 replacement JAR to compare against")
-	}
+	// ZombieBuddy Extensions is optional: report its state, never fail or warn on it.
+	appendLog("INFO  " + extensionsStatus())
 
 	// Check the normal launcher JSON for the current official Windows agent argument.
 	jsonPath := filepath.Join(pzRoot, "ProjectZomboid64.json")
@@ -528,29 +648,48 @@ func findWorkshopFile(id, name string) string {
 	return found
 }
 
-func findFixJar() string {
-	root := findWorkshopDir(workshopFix)
+// findExtensionsJar locates the Extensions replacement JAR. The author documents it at
+// <workshop>\3807686870\mods\ZombieBuddy_Extensions\42.21\ZombieBuddy.jar; a JAR in a
+// "42.21" folder is preferred, otherwise any ZombieBuddy.jar under the mod folder is used.
+func findExtensionsJar() string {
+	root := findWorkshopDir(workshopExt)
 	if root == "" {
 		return ""
 	}
-	preferred := []string{"ZombieBuddy.jar"}
-	for _, name := range preferred {
-		var found string
-		filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-			if err == nil && info != nil && !info.IsDir() && strings.EqualFold(info.Name(), name) {
-				low := strings.ToLower(path)
-				if strings.Contains(low, "42.21") {
-					found = path
-					return filepath.SkipDir
-				}
-			}
+	var preferred, fallback string
+	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info == nil || info.IsDir() || !strings.EqualFold(info.Name(), "ZombieBuddy.jar") {
 			return nil
-		})
-		if found != "" {
-			return found
 		}
+		low := strings.ToLower(path)
+		if !strings.Contains(low, strings.ToLower(extModID)) {
+			return nil
+		}
+		if strings.Contains(low, "42.21") && preferred == "" {
+			preferred = path
+		} else if fallback == "" {
+			fallback = path
+		}
+		return nil
+	})
+	if preferred != "" {
+		return preferred
 	}
-	return ""
+	return fallback
+}
+
+// extensionsStatus describes the optional Extensions add-on state for the log.
+func extensionsStatus() string {
+	src := findExtensionsJar()
+	if src == "" {
+		return "ZombieBuddy Extensions (optional) not downloaded — not required."
+	}
+	srcHash, err1 := fileSHA256(src)
+	dstHash, err2 := fileSHA256(filepath.Join(pzRoot, "ZombieBuddy.jar"))
+	if err1 == nil && err2 == nil && strings.EqualFold(srcHash, dstHash) {
+		return "ZombieBuddy Extensions (optional) is installed."
+	}
+	return "ZombieBuddy Extensions (optional) is downloaded but not installed — using official ZombieBuddy."
 }
 
 func copyFile(src, dst string) error {
