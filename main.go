@@ -35,10 +35,11 @@ const (
 )
 
 var (
-	appWindow *walk.MainWindow
-	logView   *walk.TextEdit
-	steamRoot string
-	pzRoot    string
+	appWindow   *walk.MainWindow
+	logView     *walk.TextEdit
+	statusLabel *walk.Label
+	steamRoot   string
+	pzRoot      string
 )
 
 // ---------------------------------------------------------------------------
@@ -127,87 +128,138 @@ func main() {
 	detectSteamAndPZ()
 
 	headerBg := walk.RGB(0x16, 0x1A, 0x20)
+	footerBg := walk.RGB(0xF2, 0xF3, 0xF5)
+	footerFg := walk.RGB(0x55, 0x60, 0x70)
 	btnFont := Font{Family: "Segoe UI", PointSize: 9}
-	btnFontBold := Font{Family: "Segoe UI", PointSize: 9, Bold: true}
-	btnMin := Size{Height: 36}
+	btnFinalFont := Font{Family: "Segoe UI", PointSize: 10, Bold: true}
 
 	go func() {
 		time.Sleep(200 * time.Millisecond)
-		appendLog("Steam: " + valueOrUnknown(steamRoot))
-		appendLog("Project Zomboid: " + valueOrUnknown(pzRoot))
+		steam := valueOrUnknown(steamRoot)
+		pz := valueOrUnknown(pzRoot)
+		onUI(func() {
+			if statusLabel != nil {
+				statusLabel.SetText("Steam: " + steam + "     ·     PZ: " + pz)
+			}
+		})
+		appendLog("Steam: " + steam)
+		appendLog("Project Zomboid: " + pz)
 		appendLog("Click step 1 to open the Workshop pages. Steam subscription remains user-controlled.")
 	}()
 
 	err := MainWindow{
 		AssignTo: &appWindow,
 		Title:    appName,
-		MinSize:  Size{Width: 760, Height: 580},
-		Size:     Size{Width: 780, Height: 620},
+		MinSize:  Size{Width: 880, Height: 560},
+		Size:     Size{Width: 980, Height: 640},
 		Font:     Font{Family: "Segoe UI", PointSize: 9},
 		Layout:   VBox{MarginsZero: true, SpacingZero: true},
 		Children: []Widget{
-			// Dark header
+
+			// ── Dark header ────────────────────────────────────────────────────
 			Composite{
 				Background: SolidColorBrush{Color: headerBg},
-				Layout:     VBox{Margins: Margins{Left: 20, Top: 16, Right: 20, Bottom: 16}, Spacing: 4},
+				Layout:     VBox{Margins: Margins{Left: 20, Top: 14, Right: 20, Bottom: 14}, Spacing: 4},
 				Children: []Widget{
 					Label{
-						Text:       "Project Viewpoint · Build 42 Setup Assistant",
-						Font:       Font{Family: "Segoe UI", PointSize: 13, Bold: true},
+						Text:       "Project Viewpoint  ·  Build 42 Setup Assistant",
+						Font:       Font{Family: "Segoe UI", PointSize: 14, Bold: true},
 						TextColor:  walk.RGB(0xFF, 0xFF, 0xFF),
 						Background: SolidColorBrush{Color: headerBg},
 					},
 					Label{
-						Text:       "Opens the required Workshop items, installs official ZombieBuddy, optionally adds ZombieBuddy Extensions, and verifies the result.",
+						Text:       "Subscribe  ·  Install ZombieBuddy  ·  Verify  ·  Play",
 						Font:       Font{Family: "Segoe UI", PointSize: 9},
-						TextColor:  walk.RGB(0xA8, 0xB0, 0xBC),
+						TextColor:  walk.RGB(0x8A, 0x96, 0xA8),
 						Background: SolidColorBrush{Color: headerBg},
 					},
 				},
 			},
-			// Body
+
+			// ── Two-panel body ─────────────────────────────────────────────────
 			Composite{
 				StretchFactor: 1,
-				Layout:        VBox{Margins: Margins{Left: 14, Top: 12, Right: 14, Bottom: 14}, Spacing: 10},
+				Layout: HBox{
+					Margins: Margins{Left: 14, Top: 12, Right: 14, Bottom: 12},
+					Spacing: 12,
+				},
 				Children: []Widget{
-					GroupBox{
-						Title:  "Installation Steps",
-						Layout: Grid{Columns: 2, Spacing: 8, Margins: Margins{Left: 10, Top: 8, Right: 10, Bottom: 10}},
+
+					// ── Left panel: action buttons ─────────────────────────────
+					Composite{
+						MinSize: Size{Width: 250},
+						Layout:  VBox{MarginsZero: true, Spacing: 10},
 						Children: []Widget{
-							PushButton{Text: "1 · Open required Workshop items", Font: btnFont, MinSize: btnMin,
-								OnClicked: func() { go openWorkshopPages() }},
-							PushButton{Text: "2 · Install / Update ZombieBuddy", Font: btnFont, MinSize: btnMin,
-								OnClicked: func() { go installZombieBuddy() }},
-							PushButton{Text: "3 · Verify installation", Font: btnFont, MinSize: btnMin,
-								OnClicked: func() { go verifyInstallation() }},
-							PushButton{Text: "4 · FINAL CHECK — Ready to play", Font: btnFontBold, MinSize: btnMin,
-								OnClicked: func() { go finalCheck() }},
-							PushButton{Text: "Open Project Zomboid folder", Font: btnFont, MinSize: btnMin,
-								OnClicked: openPZFolder},
+
+							GroupBox{
+								Title:  "Installation Steps",
+								Layout: VBox{Margins: Margins{Left: 10, Top: 8, Right: 10, Bottom: 12}, Spacing: 6},
+								Children: []Widget{
+									PushButton{
+										Text:      "1  ·  Open required Workshop items",
+										Font:      btnFont,
+										MinSize:   Size{Height: 34},
+										OnClicked: func() { go openWorkshopPages() },
+									},
+									PushButton{
+										Text:      "2  ·  Install / Update ZombieBuddy",
+										Font:      btnFont,
+										MinSize:   Size{Height: 34},
+										OnClicked: func() { go installZombieBuddy() },
+									},
+									PushButton{
+										Text:      "3  ·  Verify installation",
+										Font:      btnFont,
+										MinSize:   Size{Height: 34},
+										OnClicked: func() { go verifyInstallation() },
+									},
+									Composite{
+										Background: SolidColorBrush{Color: walk.RGB(0xC8, 0xD0, 0xDC)},
+										MinSize:    Size{Height: 1},
+										Layout:     HBox{MarginsZero: true, SpacingZero: true},
+									},
+									PushButton{
+										Text:      "4  ·  FINAL CHECK — Ready to play?",
+										Font:      btnFinalFont,
+										MinSize:   Size{Height: 46},
+										OnClicked: func() { go finalCheck() },
+									},
+								},
+							},
+
+							GroupBox{
+								Title:  "ZombieBuddy Extensions (Optional)",
+								Layout: VBox{Margins: Margins{Left: 10, Top: 8, Right: 10, Bottom: 12}, Spacing: 6},
+								Children: []Widget{
+									PushButton{
+										Text:      "Swap JAR  →  Extensions Version",
+										Font:      btnFont,
+										MinSize:   Size{Height: 34},
+										OnClicked: func() { go swapJarToExtensions() },
+									},
+									PushButton{
+										Text:      "Restore JAR  →  Official ZombieBuddy",
+										Font:      btnFont,
+										MinSize:   Size{Height: 34},
+										OnClicked: func() { go restoreJarToOfficial() },
+									},
+								},
+							},
+
+							PushButton{
+								Text:      "Open Project Zomboid Folder",
+								Font:      btnFont,
+								MinSize:   Size{Height: 30},
+								OnClicked: openPZFolder,
+							},
 						},
 					},
-					GroupBox{
-						Title:  "ZombieBuddy Extensions (Optional)",
-						Layout: Grid{Columns: 2, Spacing: 8, Margins: Margins{Left: 10, Top: 8, Right: 10, Bottom: 10}},
-						Children: []Widget{
-							PushButton{
-								Text:      "Swap JAR → Use Extensions Version",
-								Font:      btnFont,
-								MinSize:   btnMin,
-								OnClicked: func() { go swapJarToExtensions() },
-							},
-							PushButton{
-								Text:      "Restore JAR → Use Official ZombieBuddy",
-								Font:      btnFont,
-								MinSize:   btnMin,
-								OnClicked: func() { go restoreJarToOfficial() },
-							},
-						},
-					},
+
+					// ── Right panel: activity log ──────────────────────────────
 					GroupBox{
 						Title:         "Activity Log",
 						StretchFactor: 1,
-						Layout:        VBox{Margins: Margins{Left: 10, Top: 8, Right: 10, Bottom: 10}},
+						Layout:        VBox{Margins: Margins{Left: 8, Top: 6, Right: 8, Bottom: 8}},
 						Children: []Widget{
 							TextEdit{
 								AssignTo: &logView,
@@ -216,6 +268,21 @@ func main() {
 								Font:     Font{Family: "Consolas", PointSize: 9},
 							},
 						},
+					},
+				},
+			},
+
+			// ── Footer: path status ────────────────────────────────────────────
+			Composite{
+				Background: SolidColorBrush{Color: footerBg},
+				Layout:     HBox{Margins: Margins{Left: 14, Top: 5, Right: 14, Bottom: 5}},
+				Children: []Widget{
+					Label{
+						AssignTo:   &statusLabel,
+						Text:       "Detecting Steam and Project Zomboid...",
+						Font:       Font{Family: "Segoe UI", PointSize: 8},
+						TextColor:  footerFg,
+						Background: SolidColorBrush{Color: footerBg},
 					},
 				},
 			},
