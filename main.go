@@ -17,6 +17,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/lxn/walk"
 	. "github.com/lxn/walk/declarative"
@@ -127,11 +128,20 @@ func main() {
 	}
 	detectSteamAndPZ()
 
-	headerBg := walk.RGB(0x16, 0x1A, 0x20)
-	footerBg := walk.RGB(0xF2, 0xF3, 0xF5)
-	footerFg := walk.RGB(0x55, 0x60, 0x70)
-	btnFont := Font{Family: "Segoe UI", PointSize: 9}
-	btnFinalFont := Font{Family: "Segoe UI", PointSize: 10, Bold: true}
+	// ── Material Design dark palette ──────────────────────────────────────────
+	colBg := walk.RGB(0x0F, 0x0F, 0x0F)      // near-black background
+	colSurface := walk.RGB(0x1D, 0x1D, 0x1D) // elevated card surface
+	colHeader := walk.RGB(0x15, 0x65, 0xC0)  // Material Blue 800 (app bar)
+	colAccent := walk.RGB(0x64, 0xB5, 0xF6)  // Blue 300 — readable on dark
+	colDivider := walk.RGB(0x2A, 0x2A, 0x2A) // subtle divider
+	colFooterBg := walk.RGB(0x14, 0x14, 0x14)
+	colFooterTx := walk.RGB(0x88, 0x88, 0x88)
+
+	fontBtn := Font{Family: "Segoe UI", PointSize: 9}
+	fontFinalBtn := Font{Family: "Segoe UI", PointSize: 10, Bold: true}
+	fontCaption := Font{Family: "Segoe UI", PointSize: 7, Bold: true}
+	fontLog := Font{Family: "Consolas", PointSize: 9}
+	fontFooter := Font{Family: "Segoe UI", PointSize: 8}
 
 	go func() {
 		time.Sleep(200 * time.Millisecond)
@@ -148,98 +158,115 @@ func main() {
 	}()
 
 	err := MainWindow{
-		AssignTo: &appWindow,
-		Title:    appName,
-		MinSize:  Size{Width: 880, Height: 560},
-		Size:     Size{Width: 980, Height: 640},
-		Font:     Font{Family: "Segoe UI", PointSize: 9},
-		Layout:   VBox{MarginsZero: true, SpacingZero: true},
+		AssignTo:   &appWindow,
+		Title:      appName,
+		MinSize:    Size{Width: 900, Height: 580},
+		Size:       Size{Width: 1000, Height: 660},
+		Font:       Font{Family: "Segoe UI", PointSize: 9},
+		Background: SolidColorBrush{Color: colBg},
+		Layout:     VBox{MarginsZero: true, SpacingZero: true},
 		Children: []Widget{
 
-			// ── Dark header ────────────────────────────────────────────────────
+			// ── Material App Bar ──────────────────────────────────────────────
 			Composite{
-				Background: SolidColorBrush{Color: headerBg},
-				Layout:     VBox{Margins: Margins{Left: 20, Top: 14, Right: 20, Bottom: 14}, Spacing: 4},
+				Background: SolidColorBrush{Color: colHeader},
+				Layout:     VBox{Margins: Margins{Left: 20, Top: 16, Right: 20, Bottom: 16}, Spacing: 4},
 				Children: []Widget{
 					Label{
 						Text:       "Project Viewpoint  ·  Build 42 Setup Assistant",
 						Font:       Font{Family: "Segoe UI", PointSize: 14, Bold: true},
 						TextColor:  walk.RGB(0xFF, 0xFF, 0xFF),
-						Background: SolidColorBrush{Color: headerBg},
+						Background: SolidColorBrush{Color: colHeader},
 					},
 					Label{
 						Text:       "Subscribe  ·  Install ZombieBuddy  ·  Verify  ·  Play",
 						Font:       Font{Family: "Segoe UI", PointSize: 9},
-						TextColor:  walk.RGB(0x8A, 0x96, 0xA8),
-						Background: SolidColorBrush{Color: headerBg},
+						TextColor:  walk.RGB(0x90, 0xCA, 0xF9), // Blue 200
+						Background: SolidColorBrush{Color: colHeader},
 					},
 				},
 			},
 
-			// ── Two-panel body ─────────────────────────────────────────────────
+			// ── Body ──────────────────────────────────────────────────────────
 			Composite{
+				Background:    SolidColorBrush{Color: colBg},
 				StretchFactor: 1,
 				Layout: HBox{
-					Margins: Margins{Left: 14, Top: 12, Right: 14, Bottom: 12},
-					Spacing: 12,
+					Margins: Margins{Left: 16, Top: 16, Right: 16, Bottom: 16},
+					Spacing: 16,
 				},
 				Children: []Widget{
 
-					// ── Left panel: action buttons ─────────────────────────────
+					// ── Left column: cards ────────────────────────────────────
 					Composite{
-						MinSize: Size{Width: 250},
-						Layout:  VBox{MarginsZero: true, Spacing: 10},
+						Background: SolidColorBrush{Color: colBg},
+						MinSize:    Size{Width: 270},
+						Layout:     VBox{MarginsZero: true, Spacing: 12},
 						Children: []Widget{
 
-							GroupBox{
-								Title:  "Installation Steps",
-								Layout: VBox{Margins: Margins{Left: 10, Top: 8, Right: 10, Bottom: 12}, Spacing: 6},
+							// Card: Installation Steps
+							Composite{
+								Background: SolidColorBrush{Color: colSurface},
+								Layout:     VBox{Margins: Margins{Left: 14, Top: 12, Right: 14, Bottom: 14}, Spacing: 8},
 								Children: []Widget{
+									Label{
+										Text:       "INSTALLATION STEPS",
+										Font:       fontCaption,
+										TextColor:  colAccent,
+										Background: SolidColorBrush{Color: colSurface},
+									},
 									PushButton{
 										Text:      "1  ·  Open required Workshop items",
-										Font:      btnFont,
+										Font:      fontBtn,
 										MinSize:   Size{Height: 34},
 										OnClicked: func() { go openWorkshopPages() },
 									},
 									PushButton{
 										Text:      "2  ·  Install / Update ZombieBuddy",
-										Font:      btnFont,
+										Font:      fontBtn,
 										MinSize:   Size{Height: 34},
 										OnClicked: func() { go installZombieBuddy() },
 									},
 									PushButton{
 										Text:      "3  ·  Verify installation",
-										Font:      btnFont,
+										Font:      fontBtn,
 										MinSize:   Size{Height: 34},
 										OnClicked: func() { go verifyInstallation() },
 									},
 									Composite{
-										Background: SolidColorBrush{Color: walk.RGB(0xC8, 0xD0, 0xDC)},
+										Background: SolidColorBrush{Color: colDivider},
 										MinSize:    Size{Height: 1},
 										Layout:     HBox{MarginsZero: true, SpacingZero: true},
 									},
 									PushButton{
 										Text:      "4  ·  FINAL CHECK — Ready to play?",
-										Font:      btnFinalFont,
+										Font:      fontFinalBtn,
 										MinSize:   Size{Height: 46},
 										OnClicked: func() { go finalCheck() },
 									},
 								},
 							},
 
-							GroupBox{
-								Title:  "ZombieBuddy Extensions (Optional)",
-								Layout: VBox{Margins: Margins{Left: 10, Top: 8, Right: 10, Bottom: 12}, Spacing: 6},
+							// Card: ZombieBuddy Extensions
+							Composite{
+								Background: SolidColorBrush{Color: colSurface},
+								Layout:     VBox{Margins: Margins{Left: 14, Top: 12, Right: 14, Bottom: 14}, Spacing: 8},
 								Children: []Widget{
+									Label{
+										Text:       "ZOMBIEBUDDY EXTENSIONS (OPTIONAL)",
+										Font:       fontCaption,
+										TextColor:  colAccent,
+										Background: SolidColorBrush{Color: colSurface},
+									},
 									PushButton{
 										Text:      "Swap JAR  →  Extensions Version",
-										Font:      btnFont,
+										Font:      fontBtn,
 										MinSize:   Size{Height: 34},
 										OnClicked: func() { go swapJarToExtensions() },
 									},
 									PushButton{
 										Text:      "Restore JAR  →  Official ZombieBuddy",
-										Font:      btnFont,
+										Font:      fontBtn,
 										MinSize:   Size{Height: 34},
 										OnClicked: func() { go restoreJarToOfficial() },
 									},
@@ -248,52 +275,91 @@ func main() {
 
 							PushButton{
 								Text:      "Open Project Zomboid Folder",
-								Font:      btnFont,
+								Font:      fontBtn,
 								MinSize:   Size{Height: 30},
 								OnClicked: openPZFolder,
 							},
 						},
 					},
 
-					// ── Right panel: activity log ──────────────────────────────
-					GroupBox{
-						Title:         "Activity Log",
+					// ── Right column: Activity Log card ───────────────────────
+					Composite{
+						Background:    SolidColorBrush{Color: colSurface},
 						StretchFactor: 1,
-						Layout:        VBox{Margins: Margins{Left: 8, Top: 6, Right: 8, Bottom: 8}},
+						Layout:        VBox{Margins: Margins{Left: 14, Top: 12, Right: 14, Bottom: 14}, Spacing: 8},
 						Children: []Widget{
+							Label{
+								Text:       "ACTIVITY LOG",
+								Font:       fontCaption,
+								TextColor:  colAccent,
+								Background: SolidColorBrush{Color: colSurface},
+							},
 							TextEdit{
 								AssignTo: &logView,
 								ReadOnly: true,
 								VScroll:  true,
-								Font:     Font{Family: "Consolas", PointSize: 9},
+								Font:     fontLog,
 							},
 						},
 					},
 				},
 			},
 
-			// ── Footer: path status ────────────────────────────────────────────
+			// ── Footer ────────────────────────────────────────────────────────
 			Composite{
-				Background: SolidColorBrush{Color: footerBg},
-				Layout:     HBox{Margins: Margins{Left: 14, Top: 5, Right: 14, Bottom: 5}},
+				Background: SolidColorBrush{Color: colFooterBg},
+				Layout:     HBox{Margins: Margins{Left: 16, Top: 5, Right: 16, Bottom: 5}},
 				Children: []Widget{
 					Label{
 						AssignTo:   &statusLabel,
 						Text:       "Detecting Steam and Project Zomboid...",
-						Font:       Font{Family: "Segoe UI", PointSize: 8},
-						TextColor:  footerFg,
-						Background: SolidColorBrush{Color: footerBg},
+						Font:       fontFooter,
+						TextColor:  colFooterTx,
+						Background: SolidColorBrush{Color: colFooterBg},
 					},
 				},
 			},
 		},
 	}.Create()
+
 	if err != nil {
 		walk.MsgBox(nil, appName, "Failed to start the UI: "+err.Error(), walk.MsgBoxIconError|walk.MsgBoxOK)
 		return
 	}
+
+	enableWindowsDarkMode(appWindow)
 	close(uiReady)
 	appWindow.Run()
+}
+
+// enableWindowsDarkMode applies Windows 10/11 immersive dark-mode to the title
+// bar (DwmSetWindowAttribute) and to every PushButton descendant
+// (SetWindowTheme "DarkMode_Explorer"), so native controls render dark.
+func enableWindowsDarkMode(mw *walk.MainWindow) {
+	dark := uint32(1)
+	modDwm := syscall.NewLazyDLL("dwmapi.dll")
+	dwmSet := modDwm.NewProc("DwmSetWindowAttribute")
+	// Attribute 20 = DWMWA_USE_IMMERSIVE_DARK_MODE (Win10 2004+); also try 19 for older builds.
+	dwmSet.Call(uintptr(mw.Handle()), 20, uintptr(unsafe.Pointer(&dark)), 4)
+	dwmSet.Call(uintptr(mw.Handle()), 19, uintptr(unsafe.Pointer(&dark)), 4)
+
+	modUx := syscall.NewLazyDLL("uxtheme.dll")
+	setTheme := modUx.NewProc("SetWindowTheme")
+	subApp, _ := syscall.UTF16PtrFromString("DarkMode_Explorer")
+	applyDarkButtons(mw, setTheme, subApp)
+}
+
+func applyDarkButtons(c walk.Container, setTheme *syscall.LazyProc, subApp *uint16) {
+	children := c.Children()
+	for i := 0; i < children.Len(); i++ {
+		w := children.At(i)
+		if btn, ok := w.(*walk.PushButton); ok {
+			setTheme.Call(uintptr(btn.Handle()), uintptr(unsafe.Pointer(subApp)), 0)
+		}
+		if cc, ok := w.(walk.Container); ok {
+			applyDarkButtons(cc, setTheme, subApp)
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
